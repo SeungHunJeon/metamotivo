@@ -26,13 +26,13 @@ import warnings
 import tyro
 
 ALL_TASKS = {
-    "walker": [
-        "walk",
-        "run",
-        "stand",
-    ],
-    "cheetah": ["walk", "run"],
-    "quadruped": ["walk", "run"],
+    # "walker": [
+    #     "walk",
+    #     "run",
+    #     "stand",
+    # ],
+    "cheetah": ["run"],
+    # "quadruped": ["walk", "run"],
 }
 
 
