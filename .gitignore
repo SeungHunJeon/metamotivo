@@ -1,1 +1,4 @@
 *.pyc
+humenv_amass/
+metamotivo-S-1-datasets/
+build/
