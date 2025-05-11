@@ -41,6 +41,11 @@ from metamotivo.buffers.buffers import DictBuffer, TrajectoryBuffer
 from metamotivo.fb_cpr import FBcprAgent, FBcprAgentConfig
 from metamotivo.wrappers.humenvbench import RewardWrapper, TrackingWrapper
 
+import os
+from ruamel.yaml import YAML, dump, RoundTripDumper
+from raisimGymTorch.env.bin import motivo_env
+from raisimGymTorch.env.RaisimGymVecEnv import RaisimGymVecEnv as VecEnv
+
 if Version(humenv.__version__) < Version("0.1.2"):
     raise RuntimeError("This script requires humenv>=0.1.2")
 if Version(gymnasium.__version__) < Version("1.0"):
@@ -81,7 +86,7 @@ class TrainConfig:
     motions: str = ""
     motions_root: str = ""
     buffer_size: int = 5_000_000
-    online_parallel_envs: int = 1
+    online_parallel_envs: int = 5
     log_every_updates: int = 100_000
     work_dir: str | None = None
     num_env_steps: int = 30_000_000
@@ -117,6 +122,10 @@ class TrainConfig:
     tracking_eval_num_envs: int = 1
     tracking_eval_motions: str | None = None
     tracking_eval_motions_root: str | None = None
+
+    # raisim config
+    home_path = None
+    raisim_env_config = None
 
     def __post_init__(self):
         if self.reward_eval_tasks is None:
@@ -187,20 +196,24 @@ class Workspace:
         expert_buffer = load_expert_trajectories(self.cfg.motions, self.cfg.motions_root, device=self.cfg.buffer_device, sequence_length=self.agent_cfg.model.seq_length)
 
         print("Creating the training environment")
-        train_env, mp_info = make_humenv(
-            num_envs=self.cfg.online_parallel_envs,
-            # vectorization_mode="sync",
-            wrappers=[
-                gymnasium.wrappers.FlattenObservation,
-                lambda env: TimeAwareObservation(env, flatten=False),
-            ],
-            render_width=320,
-            render_height=320,
-            motions=self.cfg.motions,
-            motion_base_path=self.cfg.motions_root,
-            fall_prob=0.2,
-            state_init="MoCapAndFall", # MoCapAndFall - Random mixture of MoCap and Fall. 1. Fall - Random rotation of perturbed T-pose, may lead to unavoidable fall, 2. MoCap - Random pose from the provided MoCap dataset
-        )
+
+        train_env = VecEnv(motivo_env.RaisimGymEnv(self.cfg.home_path + "/rsc", dump(self.cfg.raisim_env_config['environment'], Dumper=RoundTripDumper)),
+                           self.cfg)
+        #
+        # train_env, mp_info = make_humenv(
+        #     num_envs=self.cfg.online_parallel_envs,
+        #     # vectorization_mode="sync",
+        #     wrappers=[
+        #         gymnasium.wrappers.FlattenObservation,
+        #         lambda env: TimeAwareObservation(env, flatten=False),
+        #     ],
+        #     render_width=320,
+        #     render_height=320,
+        #     motions=self.cfg.motions,
+        #     motion_base_path=self.cfg.motions_root,
+        #     fall_prob=0.2,
+        #     state_init="MoCapAndFall", # MoCapAndFall - Random mixture of MoCap and Fall. 1. Fall - Random rotation of perturbed T-pose, may lead to unavoidable fall, 2. MoCap - Random pose from the provided MoCap dataset
+        # )
 
         print("Allocating buffers")
         replay_buffer = {
@@ -210,7 +223,8 @@ class Workspace:
 
         print("Starting training")
         progb = tqdm(total=self.cfg.num_env_steps)
-        td, info = train_env.reset()
+        train_env.reset()
+        td, info = train_env.observe()
         done = np.zeros(self.cfg.online_parallel_envs, dtype=np.bool)
         total_metrics, context = None, None
         start_time = time.time()
@@ -243,10 +257,10 @@ class Workspace:
                         if n > 0:
                             priorities[mask] = 1 / n
 
-                    if mp_info is not None:
-                        mp_info["motion_buffer"].update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
-                    else:
-                        train_env.unwrapped.motion_buffer.update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
+                    # if mp_info is not None:
+                    #     mp_info["motion_buffer"].update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
+                    # else:
+                    train_env.motion_buffer.update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
                     replay_buffer["expert_slicer"].update_priorities(
                         priorities=priorities.to(self.cfg.buffer_device), idxs=torch.tensor(np.array(idxs), device=self.cfg.buffer_device)
                     )
@@ -256,11 +270,13 @@ class Workspace:
                 step_count = torch.tensor(td["time"], device=self.agent.device)
                 context = self.agent.maybe_update_rollout_context(z=context, step_count=step_count)
                 if t < self.cfg.num_seed_steps:
-                    action = train_env.action_space.sample().astype(np.float32)
+                    action = np.random.uniform(low=-1, high=1, size=train_env.num_acts).astype(np.float32)
+                    # action = train_env.action_space.sample().astype(np.float32)
                 else:
                     # this works in inference mode
                     action = self.agent.act(obs=obs, z=context, mean=False).cpu().detach().numpy()
-            new_td, reward, terminated, truncated, new_info = train_env.step(action)
+            reward, terminated, truncated = train_env.step(action)
+            new_td, new_info = train_env.observe()
             real_next_obs = new_td["obs"].astype(np.float32).copy()
             new_done = np.logical_or(terminated.ravel(), truncated.ravel())
 
@@ -321,8 +337,8 @@ class Workspace:
             done = new_done
             info = new_info
         self.agent.save(str(self.work_dir / "checkpoint"))
-        if mp_info is not None:
-            mp_info["manager"].shutdown()
+        # if mp_info is not None:
+        #     mp_info["manager"].shutdown()
 
     def eval(self, t, replay_buffer):
         print(f"Starting evaluation at time {t}")
@@ -414,17 +430,17 @@ class Workspace:
 if __name__ == "__main__":
     config = tyro.cli(TrainConfig)
 
-    env, _ = make_humenv(
-        num_envs=1,
-        vectorization_mode="sync",
-        wrappers=[gymnasium.wrappers.FlattenObservation],
-        render_width=320,
-        render_height=320,
-    )
+    home_path = os.getcwd() + "/.."
+    task_path = home_path + "/raisimGymTorch/env/envs/motivo_env"
+    cfg = YAML().load(open(task_path + "/cfg.yaml", 'r'))
+
+    cfg['environment']['num_envs'] = config.online_parallel_envs
+    config.home_path = home_path
+    config.raisim_env_config = cfg
 
     agent_config = FBcprAgentConfig()
-    agent_config.model.obs_dim = env.observation_space.shape[0]
-    agent_config.model.action_dim = env.action_space.shape[0]
+    agent_config.model.obs_dim = 358
+    agent_config.model.action_dim = 69
     agent_config.model.norm_obs = True
     agent_config.train.batch_size = 1024
     agent_config.train.use_mix_rollout = 1
@@ -473,7 +489,6 @@ if __name__ == "__main__":
     agent_config.train.discount = 0.98
     agent_config.compile = config.compile
     agent_config.cudagraphs = config.cudagraphs
-    env.close()
 
     ws = Workspace(config, agent_cfg=agent_config)
     ws.train()

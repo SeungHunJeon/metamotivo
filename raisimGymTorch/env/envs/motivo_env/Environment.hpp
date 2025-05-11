@@ -17,10 +17,7 @@ class ENVIRONMENT : public RaisimGymEnv {
  public:
 
   explicit ENVIRONMENT(const std::string& resourceDir, const Yaml::Node& cfg, bool visualizable) :
-      RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable), normDist_(0, 1) {
-
-    
-
+      RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable) {
     /// create world
     world_ = std::make_unique<raisim::World>();
 
@@ -41,7 +38,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     pTarget_.setZero(gcDim_); vTarget_.setZero(gvDim_); pTarget12_.setZero(nJoints_);
 
     /// this is nominal configuration of anymal
-    gc_init_.head(7) << 0, 0, 0.94, 0.70710678, 0.70710678, 0, 0;
+    gc_init_.head(7) << 0, 0, 1.0, 0.70710678, 0.70710678, 0, 0;
 
     /// set pd gains
     Eigen::VectorXd jointPgain(gvDim_), jointDgain(gvDim_);
@@ -81,11 +78,59 @@ class ENVIRONMENT : public RaisimGymEnv {
     
   }
 
+  void setSeed(int seed) {
+    gen_.seed(seed);
+  }
+
   void init() final { }
 
-  void reset() final {
-    robot_->setState(gc_init_, gv_init_);
-    updateObservation();
+  void generateRandomAction(Eigen::VectorXf& action, int nJoints) {
+    for (int i = 0; i < nJoints; i++) {
+      action(i) = (uniDist_(gen_) - 0.5) * 1.0; // [-0.5, 0.5)
+    }
+  }
+
+
+  void reset_fall() {
+    Eigen::VectorXd gc_init = gc_init_;
+    Eigen::VectorXd gv_init = gv_init_;
+
+    double theta = uniDist_(gen_) * 2 * M_PI;
+    raisim::Vec<3> angle_axis;
+    raisim::Vec<4> quat;
+
+    gc_init[2] = 1.0;
+    angle_axis[0] = (uniDist_(gen_) - 0.5) * 2;
+    angle_axis[1] = (uniDist_(gen_) - 0.5) * 2;
+    angle_axis[2] = (uniDist_(gen_) - 0.5) * 2;
+    angle_axis /= angle_axis.norm();
+    raisim::angleAxisToQuaternion(angle_axis, theta, quat);
+    gc_init.segment(3, 4) << quat.e();
+
+    robot_->setGeneralizedCoordinate(gc_init_);
+    robot_->setGeneralizedVelocity(gv_init_);
+
+    int n_steps = uniIntDist_(gen_);
+    Eigen::VectorXf action = Eigen::VectorXf::Zero(nJoints_);
+//    double real_time = world_->getWorldTime();
+    for (int i = 0; i < n_steps; i++) {
+      generateRandomAction(action, nJoints_);
+      step(action);
+    }
+//    world_->setWorldTime(real_time);
+  }
+
+  void reset(const Eigen::Ref<EigenVec>& gc_init, const Eigen::Ref<EigenVec>& gv_init) {
+    RSINFO("Resetting the environment with random joint angles and velocities.")
+    robot_->setState(gc_init.cast<double>(), gv_init.cast<double>());
+
+    if(uniDist_(gen_) < 0.2) {
+      RSINFO("Falling down the robot.")
+      reset_fall();
+    }
+
+    stepCounter_ = 0;
+    RSINFO("Resetting done")
   }
 
   float step(const Eigen::Ref<EigenVec>& action) final {
@@ -106,12 +151,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     Eigen::VectorXd GF;
     GF.setZero(gvDim_);
     GF.tail(nJoints_) = action_raisim;
-    // pTarget12_ = action_raisim;
-    // pTarget12_ = pTarget12_.cwiseProduct(actionStd_);
-    // pTarget12_ += actionMean_;
-    // pTarget_.tail(nJoints_) = pTarget12_;
-
-    // robot_->setPdTarget(pTarget_, vTarget_);
 
     robot_->setGeneralizedForce(GF);
 
@@ -120,18 +159,19 @@ class ENVIRONMENT : public RaisimGymEnv {
       world_->integrate();
       if(server_) server_->unlockVisualizationServerMutex();
     }
-
-    updateObservation();
-
+    stepCounter_++;
     // std::cout << action_raisim[0] << std::endl;
 
     return control_dt_;
   }
 
-  void updateObservation() {
-    
+  void updateStateVariable() {
     q = robot_->getGeneralizedCoordinate().e().tail(nJoints_);
     q_dot = robot_->getGeneralizedVelocity().e().tail(nJoints_);
+  }
+
+  void updateObservation() {
+    updateStateVariable();
 
     std::vector<Eigen::Vector3d> body_pos;
     for (int i = 0; i < FrameName.size(); i++) {
@@ -211,8 +251,21 @@ class ENVIRONMENT : public RaisimGymEnv {
   }
 
   void observe(Eigen::Ref<EigenVec> ob) final {
+    updateObservation();
     /// convert it to float
     ob = obDouble_.cast<float>();
+  }
+
+  void observeGc(Eigen::Ref<EigenVec> gc) {
+    gc = robot_->getGeneralizedCoordinate().e().cast<float>();
+  }
+
+  void observeGv(Eigen::Ref<EigenVec> gv) {
+    gv = robot_->getGeneralizedVelocity().e().cast<float>();
+  }
+
+  void observeStepCounter(int &step_counter_ob) {
+    step_counter_ob = stepCounter_;
   }
 
   bool isTerminalState(float& terminalReward) final {
@@ -227,6 +280,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
  private:
   int gcDim_, gvDim_, nJoints_;
+  int stepCounter_ = 0;
   bool visualizable_ = false;
   raisim::ArticulatedSystem* robot_;
   Eigen::VectorXd gc_init_, gv_init_, gc_, gv_, pTarget_, pTarget12_, vTarget_;
@@ -430,10 +484,13 @@ Eigen::VectorXd q_dot;
 
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.
-  std::normal_distribution<double> normDist_;
+  thread_local static std::normal_distribution<double> normDist_;
+  thread_local static std::uniform_real_distribution<double> uniDist_;
+  thread_local static std::uniform_int_distribution<int> uniIntDist_;
   thread_local static std::mt19937 gen_;
 };
 thread_local std::mt19937 raisim::ENVIRONMENT::gen_;
-
+thread_local std::uniform_real_distribution<double> raisim::ENVIRONMENT::uniDist_(0., 1.);
+thread_local std::uniform_int_distribution<int> raisim::ENVIRONMENT::uniIntDist_(1, 5);
 }
 

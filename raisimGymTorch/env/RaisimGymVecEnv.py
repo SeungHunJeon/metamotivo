@@ -7,27 +7,44 @@ import numpy as np
 import platform
 import os
 
+import h5py
+from typing import Dict, List
+import collections
+import tqdm
+import numbers
+from pathlib import Path
+from humenv.misc.motionlib import MotionBuffer
 
 class RaisimGymVecEnv:
 
-    def __init__(self, impl, normalize_ob=True, seed=0, clip_obs=10.):
+    def __init__(self, impl, cfg, normalize_ob=True, seed=0, fall_prob=0.0):
         if platform.system() == "Darwin":
             os.environ['KMP_DUPLICATE_LIB_OK']='True'
+        self.cfg = cfg
         self.normalize_ob = normalize_ob
-        self.clip_obs = clip_obs
         self.wrapper = impl
         self.num_obs = self.wrapper.getObDim()
         self.num_acts = self.wrapper.getActionDim()
+        self._gc = np.zeros([self.num_envs, self.num_acts + 7], dtype=np.float32)
+        self._gv = np.zeros([self.num_envs, self.num_acts + 6], dtype=np.float32)
+        self._gc_init = np.zeros([self.num_envs, self.num_acts + 7], dtype=np.float32)
+        self._gv_init = np.zeros([self.num_envs, self.num_acts + 6], dtype=np.float32)
+        self._step_count = np.zeros(self.num_envs, dtype=np.int32)
         self._observation = np.zeros([self.num_envs, self.num_obs], dtype=np.float32)
         self.actions = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self.log_prob = np.zeros(self.num_envs, dtype=np.float32)
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
         self._done = np.zeros(self.num_envs, dtype=bool)
+        self._truncated = np.zeros(self.num_envs, dtype=bool)
         self.rewards = [[] for _ in range(self.num_envs)]
         self.wrapper.setSeed(seed)
         self.count = 0.0
         self.mean = np.zeros(self.num_obs, dtype=np.float32)
         self.var = np.zeros(self.num_obs, dtype=np.float32)
+        self.fall_prob = fall_prob
+
+        # Motion buffer
+        self.motion_buffer = MotionBuffer(files=self.cfg.motions, base_path=self.cfg.motions_root)
 
     def seed(self, seed=None):
         self.wrapper.setSeed(seed)
@@ -46,7 +63,7 @@ class RaisimGymVecEnv:
 
     def step(self, action):
         self.wrapper.step(action, self._reward, self._done)
-        return self._reward.copy(), self._done.copy()
+        return self._reward.copy(), self._done.copy(), self._truncated.copy()
 
     def load_scaling(self, dir_name, iteration, count=1e5):
         mean_file_name = dir_name + "/mean" + str(iteration) + ".csv"
@@ -65,14 +82,30 @@ class RaisimGymVecEnv:
 
     def observe(self, update_statistics=True):
         self.wrapper.observe(self._observation, update_statistics)
-        return self._observation
+        self.wrapper.observeGc(self._gc)
+        self.wrapper.observeGv(self._gv)
+        self.wrapper.observeStepCounter(self._step_count)
+        return {"obs":self._observation, "time": self._step_count}, {"qpos": self._gc, "qvel": self._gv}
+
+    def observe_gc(self):
+        self.wrapper.observeGc(self._gc)
+        return self._gc
+
+    def observe_gv(self):
+        self.wrapper.observeGv(self._gv)
+        return self._gv
 
     def get_reward_info(self):
         return self.wrapper.getRewardInfo()
 
     def reset(self):
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
-        self.wrapper.reset()
+
+        # Here, we sample the gc init & gv init from motion buffer
+        batch = self.motion_buffer.sample(self.num_envs)
+        self._gc_init, self._gv_init = batch["qpos"], batch["qvel"]
+
+        self.wrapper.reset(self._gc_init, self._gv_init)
 
     def close(self):
         self.wrapper.close()

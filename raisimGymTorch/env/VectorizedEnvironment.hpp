@@ -53,8 +53,11 @@ class VectorizedEnvironment {
     for (int i = 0; i < num_envs_; i++) {
       // only the first environment is visualized
       environments_[i]->init();
-      environments_[i]->reset();
+      /// Manually call reset function
+//      environments_[i]->reset();
     }
+
+    setSeed(cfg_["seed"].template As<int>());
 
     obDim_ = environments_[0]->getObDim();
     actionDim_ = environments_[0]->getActionDim();
@@ -73,9 +76,10 @@ class VectorizedEnvironment {
   }
 
   // resets all environments and returns observation
-  void reset() {
-    for (auto env: environments_)
-      env->reset();
+  void reset(Eigen::Ref<EigenRowMajorMat> &gc_init, Eigen::Ref<EigenRowMajorMat> &gv_init) {
+#pragma omp parallel for schedule(auto)
+      for (int i = 0; i < num_envs_; i++)
+        environments_[i]->reset(gc_init.row(i), gv_init.row(i));
   }
 
   void observe(Eigen::Ref<EigenRowMajorMat> &ob, bool updateStatistics) {
@@ -87,6 +91,23 @@ class VectorizedEnvironment {
       updateObservationStatisticsAndNormalize(ob, updateStatistics);
   }
 
+  void observeGc(Eigen::Ref<EigenRowMajorMat> &ob) {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->observeGc(ob.row(i));
+  }
+
+  void observeGv(Eigen::Ref<EigenRowMajorMat> &ob) {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->observeGv(ob.row(i));
+  }
+
+  void observeStepCounter(Eigen::Ref<EigenIntVec> &ob) {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->observeStepCounter(ob(i));
+  }
 
   void step(Eigen::Ref<EigenRowMajorMat> &action,
             Eigen::Ref<EigenVec> &reward,
@@ -179,10 +200,11 @@ class VectorizedEnvironment {
     float terminalReward = 0;
     done[agentId] = environments_[agentId]->isTerminalState(terminalReward);
 
-    if (done[agentId]) {
-      environments_[agentId]->reset();
-      reward[agentId] += terminalReward;
-    }
+    /// There is no terminal condition in this project
+//    if (done[agentId]) {
+//      environments_[agentId]->reset();
+//      reward[agentId] += terminalReward;
+//    }
   }
 
   std::vector<ChildEnvironment *> environments_;

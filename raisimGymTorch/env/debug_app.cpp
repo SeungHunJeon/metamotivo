@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
   Eigen::Ref<EigenVec> reward_ref(reward);
   Eigen::Ref<EigenBoolVec> dones_ref(dones);
 
-  vecEnv.reset();
+//  vecEnv.reset();
   vecEnv.step(action_ref, reward_ref, dones_ref);
 
   return 0;
