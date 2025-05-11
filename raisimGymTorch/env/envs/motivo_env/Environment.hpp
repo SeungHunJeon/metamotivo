@@ -16,9 +16,11 @@ class ENVIRONMENT : public RaisimGymEnv {
 
  public:
 
-  explicit ENVIRONMENT(const std::string& resourceDir, const Yaml::Node& cfg, bool visualizable) :
+  explicit ENVIRONMENT(const std::string& resourceDir, const Yaml::Node& cfg, bool visualizable, int id) :
       RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable) {
     /// create world
+    READ_YAML(int, startSeed, cfg["seed"])
+    setSeed(startSeed + id);
     world_ = std::make_unique<raisim::World>();
 
     /// add objects
@@ -82,6 +84,24 @@ class ENVIRONMENT : public RaisimGymEnv {
     gen_.seed(seed);
   }
 
+  void setTask(std::string task) {
+    task_ = task;
+  }
+
+  void setState(const Eigen::Ref<EigenVec>& gc,
+                const Eigen::Ref<EigenVec>& gv) {
+    robot_->setState(gc.cast<double>(), gv.cast<double>());
+  }
+
+  void evaluateReward(const Eigen::Ref<EigenVec>& q_pos,
+                     const Eigen::Ref<EigenVec>& q_vel,
+                     const Eigen::Ref<EigenVec>& action,
+                     float& reward) {
+    /// TODO: implement reward function w.r.t. the task name
+
+    reward = 0.0f;
+  }
+
   void init() final { }
 
   void generateRandomAction(Eigen::VectorXf& action, int nJoints) {
@@ -107,30 +127,69 @@ class ENVIRONMENT : public RaisimGymEnv {
     raisim::angleAxisToQuaternion(angle_axis, theta, quat);
     gc_init.segment(3, 4) << quat.e();
 
-    robot_->setGeneralizedCoordinate(gc_init_);
-    robot_->setGeneralizedVelocity(gv_init_);
+    robot_->setGeneralizedCoordinate(gc_init);
+    robot_->setGeneralizedVelocity(gv_init);
 
     int n_steps = uniIntDist_(gen_);
     Eigen::VectorXf action = Eigen::VectorXf::Zero(nJoints_);
-//    double real_time = world_->getWorldTime();
+    double real_time = world_->getWorldTime();
     for (int i = 0; i < n_steps; i++) {
       generateRandomAction(action, nJoints_);
+      updateStateVariable();
       step(action);
     }
-//    world_->setWorldTime(real_time);
+    world_->setWorldTime(real_time);
   }
 
   void reset(const Eigen::Ref<EigenVec>& gc_init, const Eigen::Ref<EigenVec>& gv_init) {
-    RSINFO("Resetting the environment with random joint angles and velocities.")
     robot_->setState(gc_init.cast<double>(), gv_init.cast<double>());
 
     if(uniDist_(gen_) < 0.2) {
-      RSINFO("Falling down the robot.")
       reset_fall();
     }
 
     stepCounter_ = 0;
-    RSINFO("Resetting done")
+  }
+
+  void step2(const Eigen::VectorXf& action) {
+    /// action scaling
+    Eigen::VectorXd action_mujoco = action.cast<double>();
+    Eigen::VectorXd action_raisim(nJoints_);
+    for (int i=0; i<69; i++) {
+      if (action_mujoco[i] < -1)
+        action_mujoco[i] = -1;
+      else if (action_mujoco[i] > 1)
+        action_mujoco[i] = 1;
+      action_raisim[i] = gainprm[i] * action_mujoco[i] + biasprm[i][0] + biasprm[i][1] * q[i] + biasprm[i][2] * q_dot[i];
+      if (action_raisim[i] < forcerange[i][0])
+        action_raisim[i] = forcerange[i][0];
+      else if (action_raisim[i] > forcerange[i][1])
+        action_raisim[i] = forcerange[i][1];
+    }
+    Eigen::VectorXd GF;
+    GF.setZero(gvDim_);
+    GF.tail(nJoints_) = action_raisim;
+
+    robot_->setGeneralizedForce(GF);
+
+    for(int i=0; i< int(control_dt_ / simulation_dt_ + 1e-10); i++){
+      if(server_) server_->lockVisualizationServerMutex();
+      world_->integrate();
+      if(server_) server_->unlockVisualizationServerMutex();
+    }
+  }
+
+  void integrate() {
+    Eigen::VectorXd GF;
+    GF.setZero(gvDim_);
+
+    robot_->setGeneralizedForce(GF);
+
+    for(int i=0; i< int(control_dt_ / simulation_dt_ + 1e-10); i++){
+      if(server_) server_->lockVisualizationServerMutex();
+      world_->integrate();
+      if(server_) server_->unlockVisualizationServerMutex();
+    }
   }
 
   float step(const Eigen::Ref<EigenVec>& action) final {
@@ -279,6 +338,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
 
  private:
+  int startSeed = 0;
   int gcDim_, gvDim_, nJoints_;
   int stepCounter_ = 0;
   bool visualizable_ = false;
@@ -288,6 +348,8 @@ class ENVIRONMENT : public RaisimGymEnv {
   Eigen::VectorXd actionMean_, actionStd_, obDouble_;
   Eigen::Vector3d bodyLinearVel_, bodyAngularVel_;
   std::set<size_t> footIndices_;
+
+  std::string task_ = "";
 
   std::vector<std::string> FrameName = {
     "floating_base",  // "Pelvis"

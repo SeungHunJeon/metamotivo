@@ -28,6 +28,9 @@ PYBIND11_MODULE(RAISIMGYM_TORCH_ENV_NAME, m) {
     .def("observeStepCounter", &VectorizedEnvironment<ENVIRONMENT>::observeStepCounter)
     .def("step", &VectorizedEnvironment<ENVIRONMENT>::step)
     .def("setSeed", &VectorizedEnvironment<ENVIRONMENT>::setSeed)
+    .def("setTask", &VectorizedEnvironment<ENVIRONMENT>::setTask)
+    .def("setState", &VectorizedEnvironment<ENVIRONMENT>::setState)
+    .def("evaluateReward", &VectorizedEnvironment<ENVIRONMENT>::evaluateReward)
     .def("getRewardInfo", &VectorizedEnvironment<ENVIRONMENT>::getRewardInfo)
     .def("close", &VectorizedEnvironment<ENVIRONMENT>::close)
     .def("isTerminalState", &VectorizedEnvironment<ENVIRONMENT>::isTerminalState)
@@ -43,6 +46,7 @@ PYBIND11_MODULE(RAISIMGYM_TORCH_ENV_NAME, m) {
     .def("curriculumUpdate", &VectorizedEnvironment<ENVIRONMENT>::curriculumUpdate)
     .def("getObStatistics", &VectorizedEnvironment<ENVIRONMENT>::getObStatistics)
     .def("setObStatistics", &VectorizedEnvironment<ENVIRONMENT>::setObStatistics)
+    .def("integrate", &VectorizedEnvironment<ENVIRONMENT>::integrate)
     .def(py::pickle(
         [](const VectorizedEnvironment<ENVIRONMENT> &p) { // __getstate__ --> Pickling to Python
             /* Return a tuple that fully encodes the state of the object */

@@ -1,4 +1,5 @@
-*bin/*
+metamotivo.egg-info/*
+*egg
 *vscode/
 *idea/
 *.pyc

@@ -43,13 +43,18 @@ int main(int argc, char *argv[]) {
   EigenRowMajorMat action(config["num_envs"].template As<int>(), vecEnv.getActionDim());
   EigenVec reward(config["num_envs"].template As<int>(), 1);
   EigenBoolVec dones(config["num_envs"].template As<int>(), 1);
+  EigenRowMajorMat gc_init(config["num_envs"].template As<int>(), vecEnv.getActionDim()+7);
+  EigenRowMajorMat gv_init(config["num_envs"].template As<int>(), vecEnv.getActionDim()+6);
   action.setZero();
+  for (int i = 0 ; i < config["num_envs"].template As<int>(); i++) {
+    gc_init.row(i).segment(3,4) << 1, 0, 0, 0;
+  }
 
-  Eigen::Ref<EigenRowMajorMat> ob_ref(observation), action_ref(action);
+  Eigen::Ref<EigenRowMajorMat> ob_ref(observation), action_ref(action), gc_init_ref(gc_init), gv_init_ref(gv_init);
   Eigen::Ref<EigenVec> reward_ref(reward);
   Eigen::Ref<EigenBoolVec> dones_ref(dones);
 
-//  vecEnv.reset();
+  vecEnv.reset(gc_init_ref, gv_init_ref);
   vecEnv.step(action_ref, reward_ref, dones_ref);
 
   return 0;

@@ -44,7 +44,7 @@ class VectorizedEnvironment {
     environments_.reserve(num_envs_);
     rewardInformation_.reserve(num_envs_);
     for (int i = 0; i < num_envs_; i++) {
-      environments_.push_back(new ChildEnvironment(resourceDir_, cfg_, render_ && i == 0));
+      environments_.push_back(new ChildEnvironment(resourceDir_, cfg_, render_ && i == 0, i));
       environments_.back()->setSimulationTimeStep(cfg_["simulation_dt"].template As<double>());
       environments_.back()->setControlTimeStep(cfg_["control_dt"].template As<double>());
       rewardInformation_.push_back(environments_.back()->getRewards().getStdMap());
@@ -57,7 +57,7 @@ class VectorizedEnvironment {
 //      environments_[i]->reset();
     }
 
-    setSeed(cfg_["seed"].template As<int>());
+//    setSeed(cfg_["seed"].template As<int>());
 
     obDim_ = environments_[0]->getObDim();
     actionDim_ = environments_[0]->getActionDim();
@@ -109,6 +109,15 @@ class VectorizedEnvironment {
       environments_[i]->observeStepCounter(ob(i));
   }
 
+  void evaluateReward(Eigen::Ref<EigenRowMajorMat> &q_pos,
+                      Eigen::Ref<EigenRowMajorMat> &q_vel,
+                      Eigen::Ref<EigenRowMajorMat> &action,
+                      Eigen::Ref<EigenVec> &reward) {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->evaluateReward(q_pos.row(i), q_vel.row(i), action.row(i), reward(i));
+  }
+
   void step(Eigen::Ref<EigenRowMajorMat> &action,
             Eigen::Ref<EigenVec> &reward,
             Eigen::Ref<EigenBoolVec> &done) {
@@ -127,12 +136,32 @@ class VectorizedEnvironment {
     obMean_ = mean; obVar_ = var; obCount_ = count; }
 
   void setSeed(int seed) {
-    int seed_inc = seed;
-
-    #pragma omp parallel for schedule(auto)
-    for(int i=0; i<num_envs_; i++)
-      environments_[i]->setSeed(seed_inc++);
+//    int seed_inc = seed;
+//
+//    #pragma omp parallel for schedule(auto)
+//    for(int i=0; i<num_envs_; i++)
+//      environments_[i]->setSeed(seed_inc++);
   }
+
+  void setTask(std::string task) {
+#pragma omp parallel for schedule(auto)
+    for(int i=0; i<num_envs_; i++)
+      environments_[i]->setTask(task);
+  }
+
+  void setState(Eigen::Ref<EigenRowMajorMat> &gc,
+                Eigen::Ref<EigenRowMajorMat> &gv) {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->setState(gc.row(i), gv.row(i));
+  }
+
+  void integrate() {
+#pragma omp parallel for schedule(auto)
+    for (int i = 0; i < num_envs_; i++)
+      environments_[i]->integrate();
+  }
+
 
   void close() {
     for (auto *env: environments_)

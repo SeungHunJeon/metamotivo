@@ -28,10 +28,8 @@ import numpy as np
 import tyro
 from gymnasium.wrappers import TimeAwareObservation
 from humenv import make_humenv
-from humenv.bench import (
-    RewardEvaluation,
-    TrackingEvaluation,
-)
+from metamotivo.bench.reward_evaluation import RewardEvaluation
+from metamotivo.bench.tracking_evaluation import TrackingEvaluation
 from humenv.misc.motionlib import canonicalize, load_episode_based_h5
 from packaging.version import Version
 from tqdm import tqdm
@@ -39,7 +37,7 @@ from tqdm import tqdm
 import wandb
 from metamotivo.buffers.buffers import DictBuffer, TrajectoryBuffer
 from metamotivo.fb_cpr import FBcprAgent, FBcprAgentConfig
-from metamotivo.wrappers.humenvbench import RewardWrapper, TrackingWrapper
+from metamotivo.wrappers.humenvbench_raisim import RewardWrapper, TrackingWrapper
 
 import os
 from ruamel.yaml import YAML, dump, RoundTripDumper
@@ -114,12 +112,12 @@ class TrainConfig:
     # eval
     evaluate: bool = False
     eval_every_steps: int = 1_000_000
-    reward_eval_num_envs: int = 1
+    reward_eval_num_envs: int = 5
     reward_eval_num_eval_episodes: int = 10
     reward_eval_num_inference_samples: int = 50_000
     reward_eval_tasks: List[str] | None = None
 
-    tracking_eval_num_envs: int = 1
+    tracking_eval_num_envs: int = 5
     tracking_eval_motions: str | None = None
     tracking_eval_motions_root: str | None = None
 
@@ -187,6 +185,9 @@ class Workspace:
 
         self.manager = None
 
+        self.env = VecEnv(motivo_env.RaisimGymEnv(self.cfg.home_path + "/rsc", dump(self.cfg.raisim_env_config['environment'], Dumper=RoundTripDumper)),
+                          self.cfg)
+
     def train(self):
         self.start_time = time.time()
         self.train_online()
@@ -197,9 +198,6 @@ class Workspace:
 
         print("Creating the training environment")
 
-        train_env = VecEnv(motivo_env.RaisimGymEnv(self.cfg.home_path + "/rsc", dump(self.cfg.raisim_env_config['environment'], Dumper=RoundTripDumper)),
-                           self.cfg)
-        #
         # train_env, mp_info = make_humenv(
         #     num_envs=self.cfg.online_parallel_envs,
         #     # vectorization_mode="sync",
@@ -223,8 +221,8 @@ class Workspace:
 
         print("Starting training")
         progb = tqdm(total=self.cfg.num_env_steps)
-        train_env.reset()
-        td, info = train_env.observe()
+        self.env.reset()
+        td, info = self.env.observe(False)
         done = np.zeros(self.cfg.online_parallel_envs, dtype=np.bool)
         total_metrics, context = None, None
         start_time = time.time()
@@ -260,7 +258,7 @@ class Workspace:
                     # if mp_info is not None:
                     #     mp_info["motion_buffer"].update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
                     # else:
-                    train_env.motion_buffer.update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
+                    self.env.motion_buffer.update_priorities(motions_id=motions_id, priorities=priorities.cpu().numpy())
                     replay_buffer["expert_slicer"].update_priorities(
                         priorities=priorities.to(self.cfg.buffer_device), idxs=torch.tensor(np.array(idxs), device=self.cfg.buffer_device)
                     )
@@ -270,13 +268,13 @@ class Workspace:
                 step_count = torch.tensor(td["time"], device=self.agent.device)
                 context = self.agent.maybe_update_rollout_context(z=context, step_count=step_count)
                 if t < self.cfg.num_seed_steps:
-                    action = np.random.uniform(low=-1, high=1, size=train_env.num_acts).astype(np.float32)
+                    action = np.random.uniform(low=-1, high=1, size=self.env.num_acts).astype(np.float32)
                     # action = train_env.action_space.sample().astype(np.float32)
                 else:
                     # this works in inference mode
                     action = self.agent.act(obs=obs, z=context, mean=False).cpu().detach().numpy()
-            reward, terminated, truncated = train_env.step(action)
-            new_td, new_info = train_env.observe()
+            reward, terminated, truncated = self.env.step(action)
+            new_td, new_info = self.env.observe(False)
             real_next_obs = new_td["obs"].astype(np.float32).copy()
             new_done = np.logical_or(terminated.ravel(), truncated.ravel())
 
@@ -357,6 +355,7 @@ class Workspace:
             inference_function=inference_function,
             max_workers=1,
             process_executor=False,
+            env= self.env
         )
         reward_eval = RewardEvaluation(
             tasks=self.cfg.reward_eval_tasks,
@@ -364,6 +363,7 @@ class Workspace:
             num_contexts=1,
             num_envs=self.cfg.reward_eval_num_envs,
             num_episodes=self.cfg.reward_eval_num_eval_episodes,
+            env = self.env
         )
         start_t = time.time()
         reward_metrics = {}
@@ -397,6 +397,7 @@ class Workspace:
                 "state_init": "Default",
             },
             num_envs=self.cfg.tracking_eval_num_envs,
+            env = self.env
         )
         start_t = time.time()
         print(f"Tracking started at {time.ctime(start_t)}", flush=True)

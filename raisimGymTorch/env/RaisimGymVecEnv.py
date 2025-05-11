@@ -34,6 +34,7 @@ class RaisimGymVecEnv:
         self.actions = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self.log_prob = np.zeros(self.num_envs, dtype=np.float32)
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
+        self._evaluated_reward = np.zeros(self.num_envs, dtype=np.float32)
         self._done = np.zeros(self.num_envs, dtype=bool)
         self._truncated = np.zeros(self.num_envs, dtype=bool)
         self.rewards = [[] for _ in range(self.num_envs)]
@@ -44,10 +45,24 @@ class RaisimGymVecEnv:
         self.fall_prob = fall_prob
 
         # Motion buffer
-        self.motion_buffer = MotionBuffer(files=self.cfg.motions, base_path=self.cfg.motions_root)
+        self.motion_buffer = MotionBuffer(files=self.cfg.motions,
+                                          base_path=self.cfg.motions_root,
+                                          keys=["qpos", "qvel", "observation"])
+    def integrate(self):
+        self.wrapper.integrate()
 
     def seed(self, seed=None):
         self.wrapper.setSeed(seed)
+
+    def set_task(self, task=None):
+        self.wrapper.setTask(task)
+
+    def set_state(self, gc, gv):
+        self.wrapper.setState(gc, gv)
+
+    def evaluate_reward(self, q_pos, q_vel, action):
+        self.wrapper.evaluateReward(q_pos, q_vel, action, self._evaluated_reward)
+        return self._evaluated_reward
 
     def turn_on_visualization(self):
         self.wrapper.turnOnVisualization()
