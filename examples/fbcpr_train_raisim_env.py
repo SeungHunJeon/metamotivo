@@ -30,7 +30,7 @@ from gymnasium.wrappers import TimeAwareObservation
 from humenv import make_humenv
 from metamotivo.bench.reward_evaluation import RewardEvaluation
 from metamotivo.bench.tracking_evaluation import TrackingEvaluation
-from humenv.misc.motionlib import canonicalize, load_episode_based_h5
+from metamotivo.utils.motionlib import canonicalize, load_episode_based_h5
 from packaging.version import Version
 from tqdm import tqdm
 
@@ -43,6 +43,8 @@ import os
 from ruamel.yaml import YAML, dump, RoundTripDumper
 from raisimGymTorch.env.bin import motivo_env
 from raisimGymTorch.env.RaisimGymVecEnv import RaisimGymVecEnv as VecEnv
+
+import cProfile
 
 if Version(humenv.__version__) < Version("0.1.2"):
     raise RuntimeError("This script requires humenv>=0.1.2")
@@ -84,7 +86,7 @@ class TrainConfig:
     motions: str = ""
     motions_root: str = ""
     buffer_size: int = 5_000_000
-    online_parallel_envs: int = 5
+    online_parallel_envs: int = 100
     log_every_updates: int = 100_000
     work_dir: str | None = None
     num_env_steps: int = 30_000_000
@@ -104,6 +106,7 @@ class TrainConfig:
     wandb_pname: str | None = "fbcpr_humenv"
 
     # misc
+    profile: bool = False
     compile: bool = False
     cudagraphs: bool = False
     device: str = "cuda"
@@ -112,12 +115,12 @@ class TrainConfig:
     # eval
     evaluate: bool = False
     eval_every_steps: int = 1_000_000
-    reward_eval_num_envs: int = 5
+    reward_eval_num_envs: int = 100
     reward_eval_num_eval_episodes: int = 10
     reward_eval_num_inference_samples: int = 50_000
     reward_eval_tasks: List[str] | None = None
 
-    tracking_eval_num_envs: int = 5
+    tracking_eval_num_envs: int = 100
     tracking_eval_motions: str | None = None
     tracking_eval_motions_root: str | None = None
 
@@ -193,6 +196,10 @@ class Workspace:
         self.train_online()
 
     def train_online(self) -> None:
+        if(config.profile):
+            profiler = cProfile.Profile()
+            profiler.enable()
+
         print("Loading expert trajectories")
         expert_buffer = load_expert_trajectories(self.cfg.motions, self.cfg.motions_root, device=self.cfg.buffer_device, sequence_length=self.agent_cfg.model.seq_length)
 
@@ -263,6 +270,8 @@ class Workspace:
                         priorities=priorities.to(self.cfg.buffer_device), idxs=torch.tensor(np.array(idxs), device=self.cfg.buffer_device)
                     )
 
+                    self.env.reset()
+                    td, info = self.env.observe(False)
             with torch.no_grad():
                 obs = torch.tensor(td["obs"], dtype=torch.float32, device=self.agent.device)
                 step_count = torch.tensor(td["time"], device=self.agent.device)
@@ -335,6 +344,10 @@ class Workspace:
             done = new_done
             info = new_info
         self.agent.save(str(self.work_dir / "checkpoint"))
+
+        if(config.profile):
+            profiler.disable()
+            profiler.dump_stats("profile.prof")
         # if mp_info is not None:
         #     mp_info["manager"].shutdown()
 
@@ -491,5 +504,11 @@ if __name__ == "__main__":
     agent_config.compile = config.compile
     agent_config.cudagraphs = config.cudagraphs
 
+
+    if(config.profile):
+        config.num_env_steps = 120000
+
     ws = Workspace(config, agent_cfg=agent_config)
+
+
     ws.train()

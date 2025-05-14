@@ -13,7 +13,7 @@ import collections
 import tqdm
 import numbers
 from pathlib import Path
-from humenv.misc.motionlib import MotionBuffer
+from metamotivo.utils.motionlib import MotionBuffer
 
 class RaisimGymVecEnv:
 

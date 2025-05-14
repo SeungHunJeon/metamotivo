@@ -11,7 +11,7 @@ import numpy as np
 import functools
 import torch
 from humenv.misc.motionlib import MotionBuffer
-from humenv.bench.utils.metrics import distance_proximity, emd, phc_metrics, emd_numpy
+from metamotivo.utils.metrics import distance_proximity, emd, phc_metrics, emd_numpy
 from humenv.bench.gym_utils.episodes import Episode
 from humenv import make_humenv, CustomManager
 from concurrent.futures import ProcessPoolExecutor
@@ -56,36 +56,12 @@ class TrackingEvaluation:
 
     def run(self, agent: Any) -> Dict[str, Any]:
         ids = self.env.motion_buffer.get_motion_ids()
-        np.random.shuffle(ids)  # shuffle the ids to evenly distribute the motions, as different datasets have different motion length
-        num_workers = min(self.num_envs, len(ids))
-        motions_per_worker = np.array_split(ids, num_workers)
+        motions_per_worker = np.array_split(ids, len(ids) / self.env.num_envs)
 
-        metrics = self.tracking((motions_per_worker[0], 0, agent))
-
-        # f = functools.partial(
-        #     _async_tracking_worker,
-        #     wrappers=self.wrappers,
-        #     env_kwargs=self.env_kwargs,
-        #     motion_buffer=self.motion_buffer,
-        # )
-        # if num_workers == 1:
-        #     metrics = f((motions_per_worker[0], 0, agent))
-        # else:
-        #     prev_omp_num_th = os.environ.get("OMP_NUM_THREADS", None)
-        #     os.environ["OMP_NUM_THREADS"] = "1"
-        #     with ProcessPoolExecutor(
-        #             max_workers=num_workers,
-        #             mp_context=multiprocessing.get_context(self.mp_context),
-        #     ) as pool:
-        #         inputs = [(x, y, agent) for x, y in zip(motions_per_worker, range(len(motions_per_worker)))]
-        #         list_res = pool.map(f, inputs)
-        #         metrics = {}
-        #         for el in list_res:
-        #             metrics.update(el)
-        #     if prev_omp_num_th is None:
-        #         del os.environ["OMP_NUM_THREADS"]
-        #     else:
-        #         os.environ["OMP_NUM_THREADS"] = prev_omp_num_th
+        metrics = {}
+        for motions in motions_per_worker:
+            metric = self.tracking((motions, agent))
+            metrics.update(metric)
         return metrics
 
     def close(self) -> None:
@@ -93,76 +69,76 @@ class TrackingEvaluation:
             self.mp_manager.shutdown()
 
     def tracking(self, inputs):
-        motion_ids, pos, agent = inputs
+        motion_ids, agent = inputs
         # env = make_humenv(num_envs=1, wrappers=wrappers, **env_kwargs)[0]
         metrics = {}
-        for m_id in tqdm(motion_ids, position=pos, leave=False):
-            ep_ = self.env.motion_buffer.get(m_id)
-            # we ignore the first state since we need to pass the next observation
-            tracking_target = ep_["observation"][1:]
+
+        eps_ = self.env.motion_buffer.get(motion_ids)
+
+        max_len = max(seq_len for seq_len in eps_["seq_len"])
+
+        ctxs = torch.zeros([max_len - 1, self.env.num_envs, agent.cfg.archi.z_dim])
+        truncates = np.zeros([max_len - 1, self.env.num_envs, 1], dtype=bool)
+        gc = np.zeros([self.env.num_envs, self.env.num_acts + 7], dtype=np.float32)
+        gv = np.zeros([self.env.num_envs, self.env.num_acts + 6], dtype=np.float32)
+        tracking_targets = np.zeros([max_len - 1, self.env.num_envs, agent.cfg.obs_dim], dtype=np.float32)
+        for id, (observations, seq_len, qpos, qvel) in enumerate(zip(eps_["observation"], eps_["seq_len"], eps_["qpos"], eps_["qvel"])):
+            tracking_target = observations[1:]
             ctx = agent.tracking_inference(next_obs=tracking_target)
             ctx = [None] * tracking_target.shape[0] if ctx is None else ctx
-            self.env.set_state(gc=ep_["qpos"][0], gv=ep_["qvel"][0])
-            self.env.integrate()
-            td, info = self.env.observe(False)
-            observation = td["obs"]
-            # observation, info = env.reset(options={"qpos": ep_["qpos"][0], "qvel": ep_["qvel"][0]})
-            _episode = Episode()
-            _episode.initialise(observation, info)
-            for i in range(len(ctx)):
-                action = agent.act(observation, ctx[i])
-                reward, terminated, truncated = self.env.step(action)
-                td, info = self.env.observe(False)
-                observation = td["obs"]
-                # observation, reward, terminated, truncated, info = env.step(action)
-                _episode.add(observation, reward, action, terminated, truncated, info)
-            tmp = _episode.get()
-            tmp["tracking_target"] = tracking_target
-            tmp["motion_id"] = m_id
-            tmp["motion_file"] = self.env.motion_buffer.get_name(m_id)
-            metrics.update(_calc_metrics(tmp))
-        return metrics
+            ctxs[:seq_len - 1, id, :] = ctx
+            gc[id] = qpos[0]
+            gv[id] = qvel[0]
 
+            tracking_targets[:seq_len - 1, id, :] = tracking_target
+            truncates[seq_len - 1:, id, 0] = True  # seq_len 이후 부분을 True로 설정
 
-def _async_tracking_worker(inputs, wrappers, env_kwargs, motion_buffer: MotionBuffer):
-    motion_ids, pos, agent = inputs
-    env = make_humenv(num_envs=1, wrappers=wrappers, **env_kwargs)[0]
-    metrics = {}
-    for m_id in tqdm(motion_ids, position=pos, leave=False):
-        ep_ = motion_buffer.get(m_id)
-        # we ignore the first state since we need to pass the next observation
-        tracking_target = ep_["observation"][1:]
-        ctx = agent.tracking_inference(next_obs=tracking_target)
-        ctx = [None] * tracking_target.shape[0] if ctx is None else ctx
-        observation, info = env.reset(options={"qpos": ep_["qpos"][0], "qvel": ep_["qvel"][0]})
+        self.env.set_state(gc, gv)
+        self.env.integrate()
+        td, info = self.env.observe(False)
+        observation = td["obs"]
         _episode = Episode()
         _episode.initialise(observation, info)
-        for i in range(len(ctx)):
-            action = agent.act(observation, ctx[i])
-            observation, reward, terminated, truncated, info = env.step(action)
-            _episode.add(observation, reward, action, terminated, truncated, info)
+
+        for i in range(max_len - 1):
+            action = agent.act(observation, ctxs[i])
+            reward, terminated, truncated = self.env.step(action)
+            td, info = self.env.observe(False)
+            observation = td["obs"]
+            # observation, reward, terminated, truncated, info = env.step(action)
+            _episode.add(observation, reward, action, terminated, truncates[i], info)
         tmp = _episode.get()
-        tmp["tracking_target"] = tracking_target
-        tmp["motion_id"] = m_id
-        tmp["motion_file"] = motion_buffer.get_name(m_id)
+        tmp["tracking_target"] = tracking_targets
+        tmp["motion_id"] = motion_ids
+        tmp["motion_file"] = self.env.motion_buffer.get_name(motion_ids)
         metrics.update(_calc_metrics(tmp))
-    env.close()
-    return metrics
+        return metrics
 
 
 def _calc_metrics(ep):
     metr = {}
     next_obs = torch.tensor(ep["observation"][1:], dtype=torch.float32)
+    truncated = torch.tensor(ep["truncated"], dtype=torch.bool)
     tracking_target = torch.tensor(ep["tracking_target"], dtype=torch.float32)
-    dist_prox_res = distance_proximity(next_obs=next_obs, tracking_target=tracking_target)
-    metr.update(dist_prox_res)
-    emd_res = emd_numpy(next_obs=next_obs, tracking_target=tracking_target)
-    metr.update(emd_res)
-    phc_res = phc_metrics(next_obs=next_obs, tracking_target=tracking_target)
-    metr.update(phc_res)
-    for k, v in metr.items():
-        if isinstance(v, torch.Tensor):
-            metr[k] = v.tolist()
-    metr["motion_id"] = ep["motion_id"]
-    # metr["motion_file"] = ep["motion_file"]
-    return {ep["motion_file"]: metr}
+    dist_prox_res = distance_proximity(next_obs=next_obs, tracking_target=tracking_target, mask=truncated)
+    emd_res = emd_numpy(next_obs=next_obs, tracking_target=tracking_target, mask=truncated)
+    phc_res = phc_metrics(next_obs=next_obs, tracking_target=tracking_target, mask=truncated)
+
+    for i in range(len(emd_res)):
+        motion_file = ep["motion_file"][i]
+        metr[motion_file] = {}
+
+        metr[motion_file]["motion_id"] = ep["motion_id"][i]
+
+        # Store the results for each metric
+        metr[motion_file]["proximity"] = dist_prox_res["proximity"][i]  # Assuming proximity is a list
+        metr[motion_file]["distance"] = dist_prox_res["distance"][i]    # Assuming distance is a list
+        metr[motion_file]["success"] = dist_prox_res["success"][i]      # Assuming success is a list
+
+        metr[motion_file]["emd"] = emd_res["emd"][i]  # Assuming emd is a list
+        metr[motion_file]["mpjpe_g"] = phc_res["mpjpe_g"][i]  # Assuming mpjpe_g is a list
+        metr[motion_file]["vel_dist"] = phc_res["vel_dist"][i]  # Assuming vel_dist is a list
+        metr[motion_file]["accel_dist"] = phc_res["accel_dist"][i]  # Assuming accel_dist is a list
+        metr[motion_file]["success_phc_linf"] = phc_res["success_phc_linf"][i]  # Assuming success_phc_linf is a list
+        metr[motion_file]["success_phc_mean"] = phc_res["success_phc_mean"][i]  # Assuming success_phc_mean is a list
+    return metr
