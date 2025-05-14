@@ -268,7 +268,7 @@ class Workspace:
                 step_count = torch.tensor(td["time"], device=self.agent.device)
                 context = self.agent.maybe_update_rollout_context(z=context, step_count=step_count)
                 if t < self.cfg.num_seed_steps:
-                    action = np.random.uniform(low=-1, high=1, size=self.env.num_acts).astype(np.float32)
+                    action = np.random.uniform(low=-1, high=1, size=(self.env.num_envs, self.env.num_acts)).astype(np.float32)
                     # action = train_env.action_space.sample().astype(np.float32)
                 else:
                     # this works in inference mode

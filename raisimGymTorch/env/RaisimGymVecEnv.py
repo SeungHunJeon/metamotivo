@@ -100,7 +100,7 @@ class RaisimGymVecEnv:
         self.wrapper.observeGc(self._gc)
         self.wrapper.observeGv(self._gv)
         self.wrapper.observeStepCounter(self._step_count)
-        return {"obs":self._observation, "time": self._step_count}, {"qpos": self._gc, "qvel": self._gv}
+        return {"obs":self._observation, "time": np.expand_dims(self._step_count, axis=-1)}, {"qpos": self._gc, "qvel": self._gv}
 
     def observe_gc(self):
         self.wrapper.observeGc(self._gc)
