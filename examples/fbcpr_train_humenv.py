@@ -80,7 +80,7 @@ class TrainConfig:
     seed: int = 0
     motions: str = ""
     motions_root: str = ""
-    buffer_size: int = 5_000_000
+    buffer_size: int = 1_000_000
     online_parallel_envs: int = 5
     log_every_updates: int = 100_000
     work_dir: str | None = None

@@ -306,7 +306,7 @@ class FBAgent:
                 new_z = self.z_buffer.sample(z.shape[0], device=self.cfg.model.device)
             else:
                 new_z = self._model.sample_z(z.shape[0], device=self.cfg.model.device)
-            z = torch.where(mask_reset_z, new_z, z.to(self.cfg.model.device))
+            z = torch.where(mask_reset_z[:, None], new_z, z.to(self.cfg.model.device))
         else:
             z = self._model.sample_z(step_count.shape[0], device=self.cfg.model.device)
         return z

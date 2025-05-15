@@ -6,3 +6,6 @@ metamotivo.egg-info/*
 humenv_amass/
 metamotivo-S-1-datasets/
 build/
+cmake-build*
+examples/tmp_fbcpr
+CMakeLists.txt

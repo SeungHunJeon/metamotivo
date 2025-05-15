@@ -20,7 +20,7 @@ def load_model(path: str, device: str | None, cls: Any):
     if device is not None:
         loaded_config["device"] = device
     loaded_agent = cls(**loaded_config)
-    safetensors.torch.load_model(loaded_agent, model_dir / "model.safetensors", device=device)
+    safetensors.torch.load_model(loaded_agent, model_dir / "model.safetensors", device=device, strict=False)
     # loaded_agent.load_state_dict(
     #     torch.load(model_dir / "model.pt", weights_only=True, map_location=device)
     # )

@@ -83,7 +83,7 @@ class TrainConfig:
     seed: int = 0
     motions: str = ""
     motions_root: str = ""
-    buffer_size: int = 5_000_000
+    buffer_size: int = 1_000_000
     online_parallel_envs: int = 5
     log_every_updates: int = 100_000
     work_dir: str | None = None
@@ -268,7 +268,7 @@ class Workspace:
                 step_count = torch.tensor(td["time"], device=self.agent.device)
                 context = self.agent.maybe_update_rollout_context(z=context, step_count=step_count)
                 if t < self.cfg.num_seed_steps:
-                    action = np.random.uniform(low=-1, high=1, size=self.env.num_acts).astype(np.float32)
+                    action = np.random.uniform(low=-1, high=1, size=(self.cfg.online_parallel_envs, self.env.num_acts)).astype(np.float32)
                     # action = train_env.action_space.sample().astype(np.float32)
                 else:
                     # this works in inference mode

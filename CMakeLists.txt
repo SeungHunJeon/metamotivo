@@ -38,35 +38,8 @@ else ()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
 endif()
 
-if (UNIX AND NOT APPLE AND NOT ANDROID AND NOT WEBGL AND NOT WIN32)
-    set(RAISIM_OS linux)
-    list(APPEND CMAKE_PREFIX_PATH ../raisim/${RAISIM_OS})
-elseif(APPLE)
-    # on macOS "uname -m" returns the architecture (x86_64 or arm64)
-    execute_process(
-            COMMAND uname -m
-            RESULT_VARIABLE result
-            OUTPUT_VARIABLE OSX_NATIVE_ARCHITECTURE
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    set(RAISIM_ARCH ${OSX_NATIVE_ARCHITECTURE} CACHE STRING "ARCH")
-
-    if(${RAISIM_ARCH} STREQUAL "arm64")
-        set(RAISIM_OS m1)
-    else()
-        set(RAISIM_OS mac)
-    endif()
-
-    list(APPEND CMAKE_PREFIX_PATH ../raisim/${RAISIM_OS})
-elseif(WIN32)
-    set(RAISIM_OS win32)
-    list(APPEND CMAKE_PREFIX_PATH ../raisim/${RAISIM_OS})
-    list(APPEND CMAKE_PREFIX_PATH ../thirdParty)
-    list(APPEND Dependencies Ws2_32)
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/raisimGymTorch/env/bin)
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/raisimGymTorch/env/bin)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/raisimGymTorch/env/bin)
-endif()
+set(RAISIM_OS linux)
+list(APPEND CMAKE_PREFIX_PATH /home/user/raisim/raisimLib/raisim/${RAISIM_OS})
 
 find_package(raisim CONFIG REQUIRED)
 
