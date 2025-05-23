@@ -93,13 +93,22 @@ class ENVIRONMENT : public RaisimGymEnv {
     robot_->setState(gc.cast<double>(), gv.cast<double>());
   }
 
+  float computeReward(const Eigen::VectorXd& q_pos,
+                      const Eigen::VectorXd& q_vel,
+                      const Eigen::VectorXd& action) {
+    /// TODO: implement reward function w.r.t. the task name
+    float reward = 0.0f;
+
+
+
+    return reward;
+  }
+
   void evaluateReward(const Eigen::Ref<EigenVec>& q_pos,
                      const Eigen::Ref<EigenVec>& q_vel,
                      const Eigen::Ref<EigenVec>& action,
                      float& reward) {
-    /// TODO: implement reward function w.r.t. the task name
-
-    reward = 0.0f;
+    reward = computeReward(q_pos.cast<double>(), q_vel.cast<double>(), action.cast<double>());
   }
 
   void init() final { }
@@ -151,34 +160,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepCounter_ = 0;
   }
 
-  void step2(const Eigen::VectorXf& action) {
-    /// action scaling
-    Eigen::VectorXd action_mujoco = action.cast<double>();
-    Eigen::VectorXd action_raisim(nJoints_);
-    for (int i=0; i<69; i++) {
-      if (action_mujoco[i] < -1)
-        action_mujoco[i] = -1;
-      else if (action_mujoco[i] > 1)
-        action_mujoco[i] = 1;
-      action_raisim[i] = gainprm[i] * action_mujoco[i] + biasprm[i][0] + biasprm[i][1] * q[i] + biasprm[i][2] * q_dot[i];
-      if (action_raisim[i] < forcerange[i][0])
-        action_raisim[i] = forcerange[i][0];
-      else if (action_raisim[i] > forcerange[i][1])
-        action_raisim[i] = forcerange[i][1];
-    }
-    Eigen::VectorXd GF;
-    GF.setZero(gvDim_);
-    GF.tail(nJoints_) = action_raisim;
-
-    robot_->setGeneralizedForce(GF);
-
-    for(int i=0; i< int(control_dt_ / simulation_dt_ + 1e-10); i++){
-      if(server_) server_->lockVisualizationServerMutex();
-      world_->integrate();
-      if(server_) server_->unlockVisualizationServerMutex();
-    }
-  }
-
   void integrate() {
     Eigen::VectorXd GF;
     GF.setZero(gvDim_);
@@ -220,8 +201,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
     stepCounter_++;
     // std::cout << action_raisim[0] << std::endl;
-
-    return control_dt_;
+    return computeReward(q, q_dot, action.cast<double>());
   }
 
   void updateStateVariable() {
@@ -334,10 +314,18 @@ class ENVIRONMENT : public RaisimGymEnv {
     return false;
   }
 
+  bool isTruncated() final {
+    if(maxStepCount_ == stepCounter_) {
+      return true;
+    }
+    return false;
+  }
+
   void curriculumUpdate() { };
 
 
  private:
+  int maxStepCount_ = 300;
   int startSeed = 0;
   int gcDim_, gvDim_, nJoints_;
   int stepCounter_ = 0;

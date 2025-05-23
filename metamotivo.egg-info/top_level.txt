@@ -1,3 +1,0 @@
-_raisim_gym
-metamotivo
-metamotivo-S-1-datasets

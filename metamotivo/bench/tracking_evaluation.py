@@ -59,9 +59,10 @@ class TrackingEvaluation:
         motions_per_worker = np.array_split(ids, len(ids) / self.env.num_envs)
 
         metrics = {}
-        for motions in motions_per_worker:
+        for motions in tqdm(motions_per_worker, desc="Processing motions", dynamic_ncols=True):
             metric = self.tracking((motions, agent))
             metrics.update(metric)
+
         return metrics
 
     def close(self) -> None:
@@ -82,7 +83,11 @@ class TrackingEvaluation:
         gc = np.zeros([self.env.num_envs, self.env.num_acts + 7], dtype=np.float32)
         gv = np.zeros([self.env.num_envs, self.env.num_acts + 6], dtype=np.float32)
         tracking_targets = np.zeros([max_len - 1, self.env.num_envs, agent.cfg.obs_dim], dtype=np.float32)
-        for id, (observations, seq_len, qpos, qvel) in enumerate(zip(eps_["observation"], eps_["seq_len"], eps_["qpos"], eps_["qvel"])):
+        # Use tqdm to show progress for processing individual sequences
+        for id, (observations, seq_len, qpos, qvel) in tqdm(enumerate(zip(eps_["observation"], eps_["seq_len"], eps_["qpos"], eps_["qvel"])),
+                                                            total=len(eps_["observation"]),
+                                                            desc="Tracking observations",
+                                                            dynamic_ncols=True):
             tracking_target = observations[1:]
             ctx = agent.tracking_inference(next_obs=tracking_target)
             ctx = [None] * tracking_target.shape[0] if ctx is None else ctx
@@ -91,7 +96,7 @@ class TrackingEvaluation:
             gv[id] = qvel[0]
 
             tracking_targets[:seq_len - 1, id, :] = tracking_target
-            truncates[seq_len - 1:, id, 0] = True  # seq_len 이후 부분을 True로 설정
+            truncates[seq_len - 1:, id, 0] = True  # Set the remaining sequence to True after seq_len
 
         self.env.set_state(gc, gv)
         self.env.integrate()
@@ -100,13 +105,14 @@ class TrackingEvaluation:
         _episode = Episode()
         _episode.initialise(observation, info)
 
-        for i in range(max_len - 1):
+        # Iterate over the sequence to take actions and collect results
+        for i in tqdm(range(max_len - 1), desc="Taking actions", dynamic_ncols=True):
             action = agent.act(observation, ctxs[i])
             reward, terminated, truncated = self.env.step(action)
             td, info = self.env.observe(False)
             observation = td["obs"]
-            # observation, reward, terminated, truncated, info = env.step(action)
             _episode.add(observation, reward, action, terminated, truncates[i], info)
+
         tmp = _episode.get()
         tmp["tracking_target"] = tracking_targets
         tmp["motion_id"] = motion_ids

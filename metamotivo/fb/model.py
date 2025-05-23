@@ -157,12 +157,3 @@ class FBModel(nn.Module):
             end_idx = min(step + self.cfg.seq_length, z.shape[0])
             z[step] = z[step:end_idx].mean(dim=0)
         return self.project_z(z)
-
-    def tracking_inference2(self, next_obs: torch.Tensor) -> torch.Tensor:
-        z = self.backward_map(next_obs)
-
-        # seq_length만큼 미래의 평균을 구할 수 있도록 벡터화된 연산
-        z_padded = torch.cat([z, z[-1:].repeat(self.cfg.seq_length - 1, 1)], dim=0)  # seq_length만큼 끝 값 반복
-        z_rolling_mean = torch.mean(z_padded.unfold(0, self.cfg.seq_length, 1), dim=2)  # 슬라이딩 윈도우 평균
-
-        return self.project_z(z_rolling_mean)

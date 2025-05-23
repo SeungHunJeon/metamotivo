@@ -32,6 +32,7 @@ class RaisimGymEnv {
   virtual void observe(Eigen::Ref<EigenVec> ob) = 0;
   virtual float step(const Eigen::Ref<EigenVec>& action) = 0;
   virtual bool isTerminalState(float& terminalReward) = 0;
+  virtual bool isTruncated() = 0;
   ////////////////////////////////////////
 
   /////// optional methods ///////

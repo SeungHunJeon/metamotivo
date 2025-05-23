@@ -86,7 +86,7 @@ class TrainConfig:
     motions: str = ""
     motions_root: str = ""
     buffer_size: int = 5_000_000
-    online_parallel_envs: int = 100
+    online_parallel_envs: int = 20
     log_every_updates: int = 100_000
     work_dir: str | None = None
     num_env_steps: int = 30_000_000
@@ -115,12 +115,12 @@ class TrainConfig:
     # eval
     evaluate: bool = False
     eval_every_steps: int = 1_000_000
-    reward_eval_num_envs: int = 100
+    reward_eval_num_envs: int = 20
     reward_eval_num_eval_episodes: int = 10
     reward_eval_num_inference_samples: int = 50_000
     reward_eval_tasks: List[str] | None = None
 
-    tracking_eval_num_envs: int = 100
+    tracking_eval_num_envs: int = 20
     tracking_eval_motions: str | None = None
     tracking_eval_motions_root: str | None = None
 
@@ -174,7 +174,7 @@ class Workspace:
         self.agent = FBcprAgent(**dataclasses.asdict(agent_cfg))
 
         if self.cfg.use_wandb:
-            exp_name = "fbcpr"
+            exp_name = "fbcpr_raisim"
             wandb_name = exp_name
             # fmt: off
             wandb_config = dataclasses.asdict(self.cfg)
@@ -283,6 +283,11 @@ class Workspace:
                     # this works in inference mode
                     action = self.agent.act(obs=obs, z=context, mean=False).cpu().detach().numpy()
             reward, terminated, truncated = self.env.step(action)
+
+            if(np.any(td["time"] == 300)):
+                self.env.reset()
+                truncated = np.ones_like(truncated)
+
             new_td, new_info = self.env.observe(False)
             real_next_obs = new_td["obs"].astype(np.float32).copy()
             new_done = np.logical_or(terminated.ravel(), truncated.ravel())
@@ -320,7 +325,6 @@ class Workspace:
                     else:
                         num_metrics_updates += 1
                         total_metrics = {k: total_metrics[k] + metrics[k] for k in metrics.keys()}
-
             if t % self.cfg.log_every_updates == 0 and total_metrics is not None:
                 m_dict = {}
                 for k in sorted(list(total_metrics.keys())):
@@ -380,25 +384,25 @@ class Workspace:
         )
         start_t = time.time()
         reward_metrics = {}
-        if not replay_buffer["train"].empty():
-            print(f"Reward started at {time.ctime(start_t)}", flush=True)
-            reward_metrics = reward_eval.run(agent=eval_agent)
-            duration = time.time() - start_t
-            print(f"Reward eval time: {duration}")
-            if self.cfg.use_wandb:
-                m_dict = {}
-                avg_return = []
-                for task in reward_metrics.keys():
-                    m_dict[f"{task}/return"] = np.mean(reward_metrics[task]["reward"])
-                    m_dict[f"{task}/return#std"] = np.std(reward_metrics[task]["reward"])
-                    avg_return.append(reward_metrics[task]["reward"])
-                m_dict["reward/return"] = np.mean(avg_return)
-                m_dict["reward/return#std"] = np.std(avg_return)
-                m_dict["reward/time"] = duration
-                wandb.log(
-                    {f"eval/reward/{k}": v for k, v in m_dict.items()},
-                    step=t,
-                )
+        # if not replay_buffer["train"].empty():
+        #     print(f"Reward started at {time.ctime(start_t)}", flush=True)
+        #     reward_metrics = reward_eval.run(agent=eval_agent)
+        #     duration = time.time() - start_t
+        #     print(f"Reward eval time: {duration}")
+        #     if self.cfg.use_wandb:
+        #         m_dict = {}
+        #         avg_return = []
+        #         for task in reward_metrics.keys():
+        #             m_dict[f"{task}/return"] = np.mean(reward_metrics[task]["reward"])
+        #             m_dict[f"{task}/return#std"] = np.std(reward_metrics[task]["reward"])
+        #             avg_return.append(reward_metrics[task]["reward"])
+        #         m_dict["reward/return"] = np.mean(avg_return)
+        #         m_dict["reward/return#std"] = np.std(avg_return)
+        #         m_dict["reward/time"] = duration
+        #         wandb.log(
+        #             {f"eval/reward/{k}": v for k, v in m_dict.items()},
+        #             step=t,
+        #         )
         # ---------------------------------------------------------------
         # Tracking evaluation
         # ---------------------------------------------------------------

@@ -120,10 +120,13 @@ class VectorizedEnvironment {
 
   void step(Eigen::Ref<EigenRowMajorMat> &action,
             Eigen::Ref<EigenVec> &reward,
-            Eigen::Ref<EigenBoolVec> &done) {
+            Eigen::Ref<EigenBoolVec> &terminal,
+            Eigen::Ref<EigenBoolVec> &truncated,
+            bool check_terminal,
+            bool check_truncated) {
 #pragma omp parallel for schedule(auto)
     for (int i = 0; i < num_envs_; i++)
-      perAgentStep(i, action, reward, done);
+      perAgentStep(i, action, reward, terminal, truncated, check_terminal, check_truncated);
   }
 
   void turnOnVisualization() { if(render_) environments_[0]->turnOnVisualization(); }
@@ -222,12 +225,32 @@ class VectorizedEnvironment {
   inline void perAgentStep(int agentId,
                            Eigen::Ref<EigenRowMajorMat> &action,
                            Eigen::Ref<EigenVec> &reward,
-                           Eigen::Ref<EigenBoolVec> &done) {
+                           Eigen::Ref<EigenBoolVec> &terminal,
+                           Eigen::Ref<EigenBoolVec> &truncated,
+                           bool check_terminal,
+                           bool check_truncated) {
     reward[agentId] = environments_[agentId]->step(action.row(agentId));
     rewardInformation_[agentId] = environments_[agentId]->getRewards().getStdMap();
 
     float terminalReward = 0;
-    done[agentId] = environments_[agentId]->isTerminalState(terminalReward);
+    terminal[agentId] = environments_[agentId]->isTerminalState(terminalReward);
+    truncated[agentId] = environments_[agentId]->isTruncated();
+
+//    if (check_terminal) {
+//      if (terminal[agentId]) {
+//        environments_[agentId]->reset();
+//        reward[agentId] += terminalReward;
+//      }
+//      return;
+//    }
+//
+//    if (check_truncated) {
+//      if (truncated[agentId]) {
+//        environments_[agentId]->reset();
+//      }
+//    }
+
+
 
     /// There is no terminal condition in this project
 //    if (done[agentId]) {

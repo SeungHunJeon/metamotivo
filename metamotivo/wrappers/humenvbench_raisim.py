@@ -183,12 +183,6 @@ class TrackingWrapper(BaseHumEnvBenchWrapper):
         ctx = self.unwrapped_model.tracking_inference(next_obs=next_obs)
         return ctx
 
-    def tracking_inference2(self, next_obs: torch.Tensor | np.ndarray) -> torch.Tensor:
-        next_obs = to_torch(next_obs, device=self.device, dtype=self._dtype)
-        ctx = self.unwrapped_model.tracking_inference2(next_obs=next_obs)
-        return ctx
-
-
 def to_torch(x: np.ndarray | torch.Tensor, device: torch.device | str, dtype: torch.dtype):
     if len(x.shape) == 1:
         # adding batch dimension

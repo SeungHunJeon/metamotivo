@@ -81,10 +81,10 @@ class TrainConfig:
     motions: str = ""
     motions_root: str = ""
     buffer_size: int = 5_000_000
-    online_parallel_envs: int = 5
+    online_parallel_envs: int = 50
     log_every_updates: int = 100_000
     work_dir: str | None = None
-    num_env_steps: int = 30_0
+    num_env_steps: int = 30_000_000
     update_agent_every: int | None = None
     num_seed_steps: int | None = None
     num_agent_updates: int | None = None
@@ -108,13 +108,13 @@ class TrainConfig:
 
     # eval
     evaluate: bool = False
-    eval_every_steps: int = 1_0
+    eval_every_steps: int = 1_000_000
     reward_eval_num_envs: int = 5
     reward_eval_num_eval_episodes: int = 10
     reward_eval_num_inference_samples: int = 50_000
     reward_eval_tasks: List[str] | None = None
 
-    tracking_eval_num_envs: int = 5
+    tracking_eval_num_envs: int = 60
     tracking_eval_motions: str | None = None
     tracking_eval_motions_root: str | None = None
 
@@ -261,6 +261,12 @@ class Workspace:
                     # this works in inference mode
                     action = self.agent.act(obs=obs, z=context, mean=False).cpu().detach().numpy()
             new_td, reward, terminated, truncated, new_info = train_env.step(action)
+            if(np.any(truncated)):
+                print("truncated occurred!")
+                print(td["time"])
+            if(np.any(terminated)):
+                print("terminated occurred!")
+                print(td["time"])
             real_next_obs = new_td["obs"].astype(np.float32).copy()
             new_done = np.logical_or(terminated.ravel(), truncated.ravel())
 
