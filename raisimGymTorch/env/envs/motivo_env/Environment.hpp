@@ -20,6 +20,7 @@ class ENVIRONMENT : public RaisimGymEnv {
       RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable) {
     /// create world
     READ_YAML(int, startSeed, cfg["seed"])
+    READ_YAML(int, portNum, cfg["port"])
     setSeed(startSeed + id);
     world_ = std::make_unique<raisim::World>();
 
@@ -74,7 +75,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     /// visualize if it is the first environment
     if (visualizable_) {
       server_ = std::make_unique<raisim::RaisimServer>(world_.get());
-      server_->launchServer();
+      server_->launchServer(portNum);
       server_->focusOn(robot_);
     }
     
@@ -325,6 +326,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
 
  private:
+  int portNum = 8080;
   int maxStepCount_ = 300;
   int startSeed = 0;
   int gcDim_, gvDim_, nJoints_;

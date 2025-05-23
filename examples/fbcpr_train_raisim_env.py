@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import os
 
-os.environ["OMP_NUM_THREADS"] = "1"
-
 import torch
 
 torch.set_float32_matmul_precision("high")
@@ -82,6 +80,8 @@ def load_expert_trajectories(motions: str | Path, motions_root: str | Path, devi
 
 @dataclasses.dataclass
 class TrainConfig:
+    num_threads: int = 16
+    portNum: int = 8080
     seed: int = 0
     motions: str = ""
     motions_root: str = ""
@@ -451,10 +451,13 @@ if __name__ == "__main__":
     home_path = os.getcwd() + "/.."
     task_path = home_path + "/raisimGymTorch/env/envs/motivo_env"
     cfg = YAML().load(open(task_path + "/cfg.yaml", 'r'))
-
+    cfg['environment']['port'] = config.portNum
     cfg['environment']['num_envs'] = config.online_parallel_envs
+    cfg['environment']['num_threads'] = config.num_threads
     config.home_path = home_path
     config.raisim_env_config = cfg
+    config.reward_eval_num_envs = config.online_parallel_envs
+    config.tracking_eval_num_envs = config.online_parallel_envs
 
     agent_config = FBcprAgentConfig()
     agent_config.model.obs_dim = 358

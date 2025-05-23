@@ -4,6 +4,7 @@ record_video: yes
 environment:
   seed: 1
   render: True
+  port: 8888
 # just testing commenting
   num_envs: 100
   eval_every_n: 200
